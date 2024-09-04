@@ -35,61 +35,122 @@ class CompoundDictionary {
     }
 
     private func connectTo(url: URL) throws -> DatabaseQueue {
-        var configuration = Configuration()
-        configuration.label = "Dictionaries"
-        configuration.foreignKeysEnabled = true
-        print("Attempting to connect to database at path: \(url.path)")
-        let db = try DatabaseQueue(path: url.path, configuration: configuration)
-        print("Successfully connected to database at path: \(url.path)")
-        return db
+         var configuration = Configuration()
+         configuration.label = "Dictionaries"
+         configuration.foreignKeysEnabled = true
+         print("Attempting to connect to database at path: \(url.path)")
+         let db = try DatabaseQueue(path: url.path, configuration: configuration)
+         print("Successfully connected to database at path: \(url.path)")
+         return db
+     }
+    // Function to copy the database to a writable location if it doesn't exist
+    private func copyDatabaseToWritableLocation(fileName: String = "dic.db", fileManager: FileManager = .default) throws -> URL {
+        guard let libraryUrl = fileManager.urls(for: .libraryDirectory, in: .userDomainMask).first else {
+            throw DictionaryError.canNotGetLibraryURL
+        }
+        let dbUrl = libraryUrl.appendingPathComponent(fileName)
+        
+        // Check if the database already exists at the writable location
+        if !fileManager.fileExists(atPath: dbUrl.path) {
+            print("Database does not exist at writable location, copying from bundle...")
+
+            // Get the database file from the Bundle
+            guard let bundleDbPath = Bundle.main.path(forResource: "dic", ofType: "db") else {
+                print("Database file not found in bundle resources")
+                throw DictionaryError.dbFileNotFound
+            }
+
+            // Copy the database to the writable location
+            do {
+                try fileManager.copyItem(atPath: bundleDbPath, toPath: dbUrl.path)
+                print("Successfully copied database to writable location: \(dbUrl.path)")
+
+                // Set file permissions to ensure it's writable
+                try fileManager.setAttributes([.posixPermissions: 0o777], ofItemAtPath: dbUrl.path)
+                print("Permissions set to writable for database")
+            } catch {
+                print("Failed to copy database to writable location: \(error)")
+                throw error
+            }
+        } else {
+            print("Database already exists at writable location: \(dbUrl.path)")
+        }
+
+        return dbUrl
     }
-   
     func connectToDataBase(fileName: String = "dic.db", fileManager: FileManager = .default) throws {
         print("Starting database connection process...")
 
-        // Directly access the file in the app's resources
-        guard let dbPath = Bundle.main.path(forResource: "dic", ofType: "db") else {
+        // Directly access the file in the app's resources (read-only)
+        guard let dbBundlePath = Bundle.main.path(forResource: "dic", ofType: "db") else {
             print("Database file not found in resources")
             throw DictionaryError.dbFileNotFound
         }
 
-        print("Attempting to connect to database at path: \(dbPath)")
+        // Define the writable path in the app's Library directory
+        guard let libraryUrl = fileManager.urls(for: .libraryDirectory, in: .userDomainMask).first else {
+            print("Could not find the library directory.")
+            throw DictionaryError.canNotGetLibraryURL
+        }
 
+        let writableDBUrl = libraryUrl.appendingPathComponent(fileName)
+        print("Writable database path: \(writableDBUrl.path)")
+
+        // If the database doesn't exist in the writable location, copy it
+        if !fileManager.fileExists(atPath: writableDBUrl.path) {
+            print("Copying database from bundle to writable location.")
+            try fileManager.copyItem(atPath: dbBundlePath, toPath: writableDBUrl.path)
+        } else {
+            print("Database already exists at writable location: \(writableDBUrl.path)")
+        }
+
+        // Connect to the writable database
         do {
-            db = try connectTo(url: URL(fileURLWithPath: dbPath))
-            print("Successfully connected to database at path: \(dbPath)")
+            db = try connectTo(url: writableDBUrl)
+            print("Successfully connected to writable database at path: \(writableDBUrl.path)")
         } catch {
             print("Failed to connect to database with error: \(error)")
             throw error
         }
     }
 
-
+    
     func createDataBase(fileName: String = "dic.db", fileManager: FileManager = .default) throws {
         print("Starting database creation process...")
 
-        // Directly define the path for the database in the library directory
         guard let libraryUrl = fileManager.urls(for: .libraryDirectory, in: .userDomainMask).first else {
             throw DictionaryError.canNotGetLibraryURL
         }
+
         let dbUrl = libraryUrl.appendingPathComponent(fileName)
-        
-        print("Checking if database already exists at path: \(dbUrl.path)")
+
+        // Check if the database already exists
         guard !fileManager.fileExists(atPath: dbUrl.path) else {
             print("Database already exists at path: \(dbUrl.path)")
             throw DictionaryError.dictionaryAlreadyExists
         }
 
-        do {
-             let db = try connectTo(url: dbUrl)
-             let migrator = DBMigrator()
-             try migrator.migrate(db: db)
-             self.db = db
-             print("Database created and migrated successfully at path: \(dbUrl.path)")
-         } catch {
-             print("Failed to create and migrate database with error: \(error)")
-             throw error
-         }
+        // Connect to the database
+        let db = try connectTo(url: dbUrl)
+
+        // Define the table structure with auto-increment for 'id'
+        try db.write { db in
+            try db.execute(sql: """
+            CREATE TABLE IF NOT EXISTS dictionaries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT,
+                revision TEXT,
+                sequenced INTEGER,
+                version TEXT,
+                author TEXT,
+                url TEXT,
+                description TEXT,
+                attribution TEXT
+            );
+            """)
+        }
+        
+        print("Database created successfully.")
     }
 
 
@@ -134,7 +195,7 @@ class CompoundDictionary {
     }
 
     func addDictionary(_ decodedDictionary: DecodedDictionary, progress: ((Float) -> Void)? = nil) throws {
-        guard let db = db else {
+        guard let dbQueue = db else {
             print("Database connection is not established.")
             throw DictionaryError.noConnection
         }
@@ -142,94 +203,109 @@ class CompoundDictionary {
         let total = Float(decodedDictionary.totalEntries)
         var currentProgress = 0
 
+        // Create a dictionary object from the decoded dictionary
         var dictionary = Dictionary(from: decodedDictionary.index)
-        try db.write { db in
-            try dictionary.insert(db)
-            currentProgress += 1
-            progress?(Float(currentProgress)/total)
-            print("Inserted dictionary index with title \(decodedDictionary.index.title)")
-        }
-
-        guard let dictionaryId = dictionary.id else {
-            print("Failed to insert dictionary index.")
+        
+        // Attempt to insert the dictionary into the database
+        do {
+            try dbQueue.write { db in
+                try dictionary.insert(db)
+                print("Inserted dictionary index with title \(decodedDictionary.index.title)")
+                currentProgress += 1
+                progress?(Float(currentProgress) / total)
+            }
+        } catch {
+            print("Failed to insert dictionary index: \(error)")
             throw DictionaryError.dictionaryIndexNotInserted
         }
 
-        // TODO: Save dictionary media
-        try db.write { db in
+        // Ensure the id is correctly assigned
+        guard let dictionaryId = try dbQueue.read({ db in
+            try Int64.fetchOne(db, sql: "SELECT last_insert_rowid()")
+        }) else {
+            print("Failed to retrieve dictionary ID from the database.")
+            throw DictionaryError.dictionaryIndexNotInserted
+        }
+
+        print("Successfully retrieved dictionary ID: \(dictionaryId)")
+
+        // Now continue to insert the terms, kanjis, and other data
+        try dbQueue.write { db in
             let terms = decodedDictionary
                 .termList
-                .map { Term(from: $0, dictionaryId: dictionaryId) }
+                .map { Term(from: $0, dictionaryId: Int(dictionaryId)) }
             for var term in terms {
                 try term.insert(db)
                 currentProgress += 1
                 if currentProgress % 10000 == 0 {
                     print("Inserted term batch. Current progress: \(currentProgress) / \(total)")
-                    progress?(Float(currentProgress)/total)
+                    progress?(Float(currentProgress) / total)
                 }
             }
             print("Inserted \(terms.count) terms into the database")
         }
 
-        try db.write { db in
+        try dbQueue.write { db in
             let termsMeta = decodedDictionary
                 .termMetaList
-                .map { TermMeta(from: $0, dictionaryId: dictionaryId) }
+                .map { TermMeta(from: $0, dictionaryId: Int(dictionaryId)) }
             for var termMeta in termsMeta {
                 try termMeta.insert(db)
                 currentProgress += 1
                 if currentProgress % 10000 == 0 {
                     print("Inserted termsMeta batch. Current progress: \(currentProgress) / \(total)")
-                    progress?(Float(currentProgress)/total)
+                    progress?(Float(currentProgress) / total)
                 }
             }
             print("Inserted \(termsMeta.count) term metadata entries into the database")
         }
 
-        try db.write { db in
+        try dbQueue.write { db in
             let kanjis = decodedDictionary
                 .kanjiList
-                .map { Kanji(from: $0, dictionaryId: dictionaryId) }
+                .map { Kanji(from: $0, dictionaryId: Int(dictionaryId)) }
             for var kanji in kanjis {
                 try kanji.insert(db)
                 currentProgress += 1
                 if currentProgress % 10000 == 0 {
-                    progress?(Float(currentProgress)/total)
+                    progress?(Float(currentProgress) / total)
                 }
             }
             print("Inserted \(kanjis.count) kanji entries into the database")
         }
 
-        try db.write { db in
+        try dbQueue.write { db in
             let kanjisMeta = decodedDictionary
                 .kanjiMetaList
-                .map { KanjiMeta(from: $0, dictionaryId: dictionaryId) }
+                .map { KanjiMeta(from: $0, dictionaryId: Int(dictionaryId)) }
             for var kanjiMeta in kanjisMeta {
                 try kanjiMeta.insert(db)
                 currentProgress += 1
                 if currentProgress % 10000 == 0 {
-                    progress?(Float(currentProgress)/total)
+                    progress?(Float(currentProgress) / total)
                 }
             }
             print("Inserted \(kanjisMeta.count) kanji metadata entries into the database")
         }
 
-        try db.write { db in
+        try dbQueue.write { db in
             let tags = decodedDictionary
                 .tags
-                .map { Tag(from: $0, dictionaryId: dictionaryId) }
+                .map { Tag(from: $0, dictionaryId: Int(dictionaryId)) }
             for var tag in tags {
                 try tag.insert(db)
                 currentProgress += 1
                 if currentProgress % 10000 == 0 {
-                    progress?(Float(currentProgress)/total)
+                    progress?(Float(currentProgress) / total)
                 }
             }
             print("Inserted \(tags.count) tags into the database")
         }
-        progress?(Float(currentProgress)/total)
+
+        progress?(Float(currentProgress) / total)
         print("Finished addDictionary process for \(decodedDictionary.index.title)")
     }
+
 
     func deleteDictionary(id: Int) throws {
         guard let db = db else {
