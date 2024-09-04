@@ -38,38 +38,60 @@ class CompoundDictionary {
         var configuration = Configuration()
         configuration.label = "Dictionaries"
         configuration.foreignKeysEnabled = true
+        print("Attempting to connect to database at path: \(url.path)")
         let db = try DatabaseQueue(path: url.path, configuration: configuration)
+        print("Successfully connected to database at path: \(url.path)")
         return db
     }
-
+   
     func connectToDataBase(fileName: String = "dic.db", fileManager: FileManager = .default) throws {
-        guard let libraryUrl = fileManager.urls(for: .libraryDirectory, in: .userDomainMask).first else {
-            throw DictionaryError.canNotGetLibraryURL
-        }
+        print("Starting database connection process...")
 
-        let dbUrl = libraryUrl.appendingPathComponent(fileName)
-        guard fileManager.fileExists(atPath: dbUrl.path) else {
+        // Directly access the file in the app's resources
+        guard let dbPath = Bundle.main.path(forResource: "dic", ofType: "db") else {
+            print("Database file not found in resources")
             throw DictionaryError.dbFileNotFound
         }
 
-        db = try connectTo(url: dbUrl)
+        print("Attempting to connect to database at path: \(dbPath)")
+
+        do {
+            db = try connectTo(url: URL(fileURLWithPath: dbPath))
+            print("Successfully connected to database at path: \(dbPath)")
+        } catch {
+            print("Failed to connect to database with error: \(error)")
+            throw error
+        }
     }
 
+
     func createDataBase(fileName: String = "dic.db", fileManager: FileManager = .default) throws {
+        print("Starting database creation process...")
+
+        // Directly define the path for the database in the library directory
         guard let libraryUrl = fileManager.urls(for: .libraryDirectory, in: .userDomainMask).first else {
             throw DictionaryError.canNotGetLibraryURL
         }
-
         let dbUrl = libraryUrl.appendingPathComponent(fileName)
+        
+        print("Checking if database already exists at path: \(dbUrl.path)")
         guard !fileManager.fileExists(atPath: dbUrl.path) else {
+            print("Database already exists at path: \(dbUrl.path)")
             throw DictionaryError.dictionaryAlreadyExists
         }
 
-        let db = try connectTo(url: dbUrl)
-        let migrator = DBMigrator()
-        try migrator.migrate(db: db)
-        self.db = db
+        do {
+             let db = try connectTo(url: dbUrl)
+             let migrator = DBMigrator()
+             try migrator.migrate(db: db)
+             self.db = db
+             print("Database created and migrated successfully at path: \(dbUrl.path)")
+         } catch {
+             print("Failed to create and migrate database with error: \(error)")
+             throw error
+         }
     }
+
 
     func removeDataBase(fileName: String = "dic.db", fileManager: FileManager = .default) throws {
         guard let libraryUrl = fileManager.urls(for: .libraryDirectory, in: .userDomainMask).first else {
@@ -113,8 +135,10 @@ class CompoundDictionary {
 
     func addDictionary(_ decodedDictionary: DecodedDictionary, progress: ((Float) -> Void)? = nil) throws {
         guard let db = db else {
+            print("Database connection is not established.")
             throw DictionaryError.noConnection
         }
+        print("Starting addDictionary process for \(decodedDictionary.index.title)")
         let total = Float(decodedDictionary.totalEntries)
         var currentProgress = 0
 
@@ -123,9 +147,11 @@ class CompoundDictionary {
             try dictionary.insert(db)
             currentProgress += 1
             progress?(Float(currentProgress)/total)
+            print("Inserted dictionary index with title \(decodedDictionary.index.title)")
         }
 
         guard let dictionaryId = dictionary.id else {
+            print("Failed to insert dictionary index.")
             throw DictionaryError.dictionaryIndexNotInserted
         }
 
@@ -138,9 +164,11 @@ class CompoundDictionary {
                 try term.insert(db)
                 currentProgress += 1
                 if currentProgress % 10000 == 0 {
+                    print("Inserted term batch. Current progress: \(currentProgress) / \(total)")
                     progress?(Float(currentProgress)/total)
                 }
             }
+            print("Inserted \(terms.count) terms into the database")
         }
 
         try db.write { db in
@@ -151,9 +179,11 @@ class CompoundDictionary {
                 try termMeta.insert(db)
                 currentProgress += 1
                 if currentProgress % 10000 == 0 {
+                    print("Inserted termsMeta batch. Current progress: \(currentProgress) / \(total)")
                     progress?(Float(currentProgress)/total)
                 }
             }
+            print("Inserted \(termsMeta.count) term metadata entries into the database")
         }
 
         try db.write { db in
@@ -167,6 +197,7 @@ class CompoundDictionary {
                     progress?(Float(currentProgress)/total)
                 }
             }
+            print("Inserted \(kanjis.count) kanji entries into the database")
         }
 
         try db.write { db in
@@ -180,6 +211,7 @@ class CompoundDictionary {
                     progress?(Float(currentProgress)/total)
                 }
             }
+            print("Inserted \(kanjisMeta.count) kanji metadata entries into the database")
         }
 
         try db.write { db in
@@ -193,8 +225,10 @@ class CompoundDictionary {
                     progress?(Float(currentProgress)/total)
                 }
             }
+            print("Inserted \(tags.count) tags into the database")
         }
         progress?(Float(currentProgress)/total)
+        print("Finished addDictionary process for \(decodedDictionary.index.title)")
     }
 
     func deleteDictionary(id: Int) throws {

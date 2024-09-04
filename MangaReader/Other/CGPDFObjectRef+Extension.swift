@@ -19,16 +19,21 @@ extension CGPDFObjectRef {
     }
 
     subscript<R, K>(_ getter: (OpaquePointer, K, UnsafeMutablePointer<R?>) -> Bool, _ key: K) -> R? {
-        var result: R!
-        guard getter(self, key, &result) else { return nil }
-        return result
+        var result: R?
+        let success = withUnsafeMutablePointer(to: &result) { pointer in
+            return getter(self, key, pointer)
+        }
+        return success ? result : nil
     }
 
     subscript<R, K>(_ getter: (OpaquePointer, K, UnsafeMutableRawPointer?) -> Bool, _ key: K) -> R? {
-        var result: R!
-        guard getter(self, key, &result) else { return nil }
-        return result
+        var result: R?
+        let success = withUnsafeMutablePointer(to: &result) { pointer in
+            return getter(self, key, UnsafeMutableRawPointer(pointer))
+        }
+        return success ? result : nil
     }
+
 
     func getNameArray(for key: String) -> [String]? {
         var object: CGPDFObjectRef!

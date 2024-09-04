@@ -5,10 +5,13 @@ target 'Kantan-Manga' do
   # Comment the next line if you're not using Swift and don't want to use dynamic frameworks
   use_frameworks!
 
+  
   # Pods for MangaReader
   pod 'ZIPFoundation', '~> 0.9'
   pod 'GCDWebServer/WebUploader', '~> 3.0'
   pod 'Firebase/Core'
+  pod 'FirebaseCoreDiagnostics'
+  pod 'FirebaseCore'  # Add this line
   pod 'GRDB.swift'
   pod 'UnrarKit'
   target 'Kantan-MangaTests' do
