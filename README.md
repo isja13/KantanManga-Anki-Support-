@@ -47,7 +47,7 @@ ANKI CONNECT GUIDE//
 
 Make sure Anki Connect is installed as an add on for Anki desktop
 
-Go to Config from the Add ons window and ensure make sure it matches : 
+Go to Config from the Add ons window and make sure it matches : 
 {
     "apiKey": null,
     "apiLogPath": null,
