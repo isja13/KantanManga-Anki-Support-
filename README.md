@@ -16,7 +16,7 @@ Sideload with Altstore
 
 *Sign with third party signing tool if necessary*
 
-
+(Currently the Sandboxing and Entitlements between Xcode and .ipa versions cause the sideloaded to crash when new manga is loaded)
 
 BUILDING //
 
