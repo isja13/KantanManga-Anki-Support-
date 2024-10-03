@@ -81,7 +81,7 @@ Enjoy! Happy reading/studying!
 ## Cloning
 1. Clone the repository including submodules.
 ```
-git clone --recurse-submodules https://github.com/isja13/KantanManga-Anki-Support-.git
+git clone --recurse-submodules https://github.com/juanj/KantanManga.git
 
 ```
 2. Use bundler to install Cocoapods
